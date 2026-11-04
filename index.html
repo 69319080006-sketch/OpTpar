@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Troll Parkour</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050510;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
+            border: 2px solid #1a1a3a;
+            background-color: #090914;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(5, 5, 16, 0.85);
+            z-index: 10;
+            text-align: center;
+        }
+        .hidden { display: none !important; }
+        
+        #hud {
+            position: absolute;
+            top: 15px; left: 20px; right: 20px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 5;
+            pointer-events: none;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 0 0 5px #0ff;
+            color: #0ff;
+        }
+
+        #troll-message {
+            position: absolute;
+            top: 30%;
+            width: 100%;
+            text-align: center;
+            font-size: 32px;
+            color: #ff0055;
+            text-shadow: 0 0 15px #ff0055;
+            z-index: 8;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .btn {
+            margin-top: 30px;
+            padding: 12px 24px;
+            background: transparent;
+            color: #0ff;
+            border: 2px solid #0ff;
+            font-family: inherit;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.2);
+            transition: all 0.2s;
+        }
+        .btn:hover { 
+            background: #0ff; 
+            color: #000;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.6);
+        }
+        .btn:active { transform: scale(0.95); }
+
+        .title {
+            font-size: 48px;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px #0ff, 0 0 30px #0ff;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="hud" class="hidden">
+        <div id="level-display">Level: 1</div>
+        <div id="death-counter">Deaths: 0</div>
+        <div id="hint-display" style="color: #ffaa00;">Hints: 0</div>
+        <button id="hint-btn" style="pointer-events: auto; padding: 2px 10px; background: #222; border: 1px solid #0ff; color: #0ff; cursor: pointer; border-radius: 5px;">Hint (H)</button>
+    </div>
+    
+    <div id="troll-message"></div>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="overlay">
+        <h1 class="title text-cyan-400" style="text-shadow: 0 0 20px #f0f; color: #f0f;">TROLL PARKOUR</h1>
+        <p class="text-md text-gray-300 mt-4 leading-loose max-w-md">
+            WASD / Arrows to move. W / SPACE to Jump.<br>
+            Trust NOTHING. Everything is a lie.<br>
+            If you get stuck, press <b>[H]</b> or click <b>Hint</b>.<br>
+            Can you survive the 10 levels of madness?
+        </p>
+        <button id="start-btn" class="btn" style="border-color: #f0f; color: #f0f; box-shadow: 0 0 10px rgba(255,0,255,0.3);">Suffer Now</button>
+    </div>
+
+    <!-- Win Screen -->
+    <div id="win-screen" class="overlay hidden">
+        <h1 class="title text-green-400" style="text-shadow: 0 0 15px #0f0, 0 0 30px #0f0;">YOU DID IT!</h1>
+        <p class="text-xl mt-4 text-white">Total Deaths: <span id="final-deaths" class="text-green-300">0</span></p>
+        <p class="text-md text-gray-400 mt-8">Great job mastering the parkour.</p>
+        <button id="restart-btn" class="btn" style="border-color: #0f0; color: #0f0; box-shadow: 0 0 10px rgba(0,255,0,0.3);">Play Again</button>
+    </div>
+
+    <!-- Canvas -->
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    const ui = {
+        start: document.getElementById('start-screen'),
+        win: document.getElementById('win-screen'),
+        hud: document.getElementById('hud'),
+        level: document.getElementById('level-display'),
+        deaths: document.getElementById('death-counter'),
+        finalDeaths: document.getElementById('final-deaths'),
+        trollMsg: document.getElementById('troll-message'),
+        hintDisplay: document.getElementById('hint-display'),
+        hintBtn: document.getElementById('hint-btn')
+    };
+
+    let gameState = 'START';
+    let deaths = 0;
+    let currentLevel = 0;
+    let hintsUsed = 0;
+    let hintActive = false;
+    
+    const keys = { left: false, right: false, up: false };
+
+    // FORGIVING PHYSICS CONSTANTS
+    const TILE_SIZE = 40;
+    const GRAVITY = 0.35; // Lower gravity
+    const MAX_FALL_SPEED = 10;
+    const WALL_SLIDE_SPEED = 2.0; // Slide slower
+    
+    const PLAYER_SPEED = 6.0; // Move slightly faster
+    const PLAYER_ACCEL = 1.2;
+    const PLAYER_FRICTION = 0.8;
+    
+    const JUMP_FORCE = -10.5; // Higher jump
+    const WALL_JUMP_FORCE_Y = -10.0;
+    const WALL_JUMP_FORCE_X = 8.0;
+
+    let coyoteTimeCounter = 0;
+    const COYOTE_TIME_MAX = 8; // Number of frames you can jump after falling off a ledge
+
+    const player = {
+        x: 0, y: 0,
+        w: 24, h: 24,
+        vx: 0, vy: 0,
+        color: '#0ff',
+        onGround: false,
+        onWallLeft: false,
+        onWallRight: false
+    };
+
+    const trollMessages = [
+        "Is that all you got?", "My grandma plays better.", "You fell for THAT?!", 
+        "Trust issues building up?", "Maybe try pressing H?", "Skill issue detected.", 
+        "Imagine dying there.", "Git gud.", "Oof, right in the spikes.", 
+        "The goal was a lie!", "Look before you leap!"
+    ];
+
+    /* Level Legend (20x15):
+       # = Real Wall        O = Fake Wall (Walk through)
+       ^, S = Spike Up      V = Falling Spike
+       G = Real Goal        F = Fake Goal (Kills you!)
+       ~ = Lava             P = Player Spawn
+    */
+    // 10 TROLL LEVELS
+    const levels = [
+        // Level 1: Wall jump secret
+        [
+            "####################",
+            "#F                 #",
+            "####          F    #",
+            "#G #   V     ###   #",
+            "#O #  ###          #",
+            "#  #               #",
+            "#  #       V       #",
+            "#  #      ###      #",
+            "#  #               #",
+            "#  #  V            #",
+            "#  # ###           #",
+            "#  #              P#",
+            "####~~~~~~~~~~######",
+            "####~~~~~~~~~~######",
+            "####################"
+        ],
+        // Level 2: The pit of lies
+        [
+            "####################",
+            "#############G######",
+            "#############O######",
+            "#F           #     #",
+            "###          #  F  #",
+            "#            # ### #",
+            "#     V      #     #",
+            "#    ###     #     #",
+            "#            #     #",
+            "#            #     #",
+            "#            #     #",
+            "#P           #     #",
+            "####~~~~~~~~~#~~####",
+            "####~~~~~~~~~#~~####",
+            "####################"
+        ],
+        // Level 3: The box of lies
+        [
+            "####################",
+            "#                  #",
+            "#  F           F   #",
+            "######       #######",
+            "#                  #",
+            "#         V        #",
+            "#        ###       #",
+            "#                  #",
+            "#        G         #",
+            "#     ####O        #",
+            "#     #####   #### #",
+            "#P                 #",
+            "####~~~~~~~~~~#### #",
+            "####~~~~~~~~~~#### #",
+            "####################"
+        ],
+        // Level 4: Drop down (Fake floor)
+        [
+            "####################",
+            "#P                 #",
+            "#####O#O#######O####",
+            "#                  #",
+            "#                  #",
+            "#F      V    V    F#",
+            "#####   #    #   ###",
+            "#                  #",
+            "#                  #",
+            "#     F      G     #",
+            "##   ###    ###   ##",
+            "#                  #",
+            "##~~####~~~~####~~##",
+            "####################",
+            "####################"
+        ],
+        // Level 5: Leap of faith (Real goal hidden in wall, fake goal in plain sight)
+        [
+            "####################",
+            "#             #  G #",
+            "#             #  # #",
+            "#             #  # #",
+            "#             #  # #",
+            "#P            O  # #",
+            "###           #  # #",
+            "#             #  # #",
+            "#             #    #",
+            "#             ######",
+            "#                  #",
+            "# F                #",
+            "###~~~~~~~~~~~~~~~~#",
+            "####################",
+            "####################"
+        ],
+        // Level 6: The spike maze (Paths look safe but lead to Fake goals or falling spikes)
+        [
+            "####################",
+            "#                  #",
+            "#  G     V      F  #",
+            "####   ####   ######",
+            "#        #         #",
+            "#        #         #",
+            "#        #    V    #",
+            "#  F     O         #",
+            "######   #######   #",
+            "#                  #",
+            "#      S    S      #",
+            "#P                 #",
+            "####################",
+            "####################",
+            "####################"
+        ],
+        // Level 7: Wall climb trap (Climbing normally leads to spikes, go through wall)
+        [
+            "####################",
+            "#  F             F #",
+            "####   #######   ###",
+            "#  #   #     #   # #",
+            "#  #   #  G  #   # #",
+            "#  #   #  #  #   # #",
+            "#  #   #  #  #   # #",
+            "#  #   #  O  #   # #",
+            "#  #   ####  #   # #",
+            "#  #             # #",
+            "#  #             # #",
+            "#P #             # #",
+            "####~~~~~~~~~~~~~###",
+            "####~~~~~~~~~~~~~###",
+            "####################"
+        ],
+        // Level 8: Rain of terror
+        [
+            "####################",
+            "# V V V V V V V V  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#                  #",
+            "#P                G#",
+            "####################",
+            "####################",
+            "####################"
+        ],
+        // Level 9: Which one is real? (Only hint can save you)
+        [
+            "####################",
+            "# F              F #",
+            "####            ####",
+            "# F              F #",
+            "####            ####",
+            "# F       F      F #",
+            "####    ####    ####",
+            "# F       G      F #",
+            "####    ####    ####",
+            "# F       F      F #",
+            "####    ####    ####",
+            "#P                 #",
+            "####~~~~~~~~~~~~####",
+            "####~~~~~~~~~~~~####",
+            "####################"
+        ],
+        // Level 10: The Troll Gauntlet
+        [
+            "####################",
+            "# F              G #",
+            "##########  ########",
+            "#                  #",
+            "#                  #",
+            "#          O       #",
+            "#          #   V   #",
+            "#  V   #####       #",
+            "#                  #",
+            "#   ####       F   #",
+            "#                  #",
+            "#P                 #",
+            "######~~~~####~~~~##",
+            "######~~~~####~~~~##",
+            "####################"
+        ]
+    ];
+
+    let walls = [], spikes = [], lavas = [], fallingSpikes = [];
+    let fakeWalls = [], fakeGoals = [];
+    let goal = null;
+    let particles = [];
+
+    function loadLevel(index) {
+        walls = []; spikes = []; lavas = []; fallingSpikes = [];
+        fakeWalls = []; fakeGoals = [];
+        goal = null;
+        particles = [];
+        
+        const map = levels[index];
+        for (let r = 0; r < 15; r++) {
+            for (let c = 0; c < 20; c++) {
+                const char = map[r][c];
+                const x = c * TILE_SIZE;
+                const y = r * TILE_SIZE;
+                
+                if (char === '#') walls.push({x, y, w: TILE_SIZE, h: TILE_SIZE});
+                else if (char === 'O') fakeWalls.push({x, y, w: TILE_SIZE, h: TILE_SIZE});
+                else if (char === 'P') {
+                    player.x = x + (TILE_SIZE - player.w) / 2;
+                    player.y = y + (TILE_SIZE - player.h) / 2;
+                    player.vx = 0; player.vy = 0;
+                    coyoteTimeCounter = 0;
+                }
+                else if (char === 'G') goal = {x, y, w: TILE_SIZE, h: TILE_SIZE};
+                else if (char === 'F') fakeGoals.push({x, y, w: TILE_SIZE, h: TILE_SIZE});
+                else if (char === '~') lavas.push({x, y, w: TILE_SIZE, h: TILE_SIZE});
+                else if (char === '^' || char === 'S') spikes.push({x, y, w: TILE_SIZE, h: TILE_SIZE, dir: 'up'});
+                else if (char === 'v') spikes.push({x, y, w: TILE_SIZE, h: TILE_SIZE, dir: 'down'});
+                else if (char === '<') spikes.push({x, y, w: TILE_SIZE, h: TILE_SIZE, dir: 'left'});
+                else if (char === '>') spikes.push({x, y, w: TILE_SIZE, h: TILE_SIZE, dir: 'right'});
+                else if (char === 'V') fallingSpikes.push({x, y, w: TILE_SIZE, h: TILE_SIZE, origY: y, vy: 0, falling: false});
+            }
+        }
+        
+        ui.level.innerText = `Level: ${index + 1} / ${levels.length}`;
+        hintActive = false; // Reset hint per level
+    }
+
+    function showTrollMessage() {
+        const msg = trollMessages[Math.floor(Math.random() * trollMessages.length)];
+        ui.trollMsg.innerText = msg;
+        ui.trollMsg.style.color = '#ff0055'; 
+        ui.trollMsg.style.textShadow = '0 0 15px #ff0055';
+        ui.trollMsg.style.opacity = 1;
+        setTimeout(() => { ui.trollMsg.style.opacity = 0; }, 1500);
+    }
+
+    function resetPlayer() {
+        deaths++;
+        ui.deaths.innerText = `Deaths: ${deaths}`;
+        createDeathParticles(player.x + player.w/2, player.y + player.h/2);
+        showTrollMessage();
+        
+        const tempDeaths = deaths;
+        loadLevel(currentLevel);
+        deaths = tempDeaths;
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'a' || e.key === 'ArrowLeft') keys.left = true;
+        if (e.key === 'd' || e.key === 'ArrowRight') keys.right = true;
+        if (e.key === 'w' || e.key === 'ArrowUp' || e.key === ' ') {
+            if (!keys.up) handleJump();
+            keys.up = true;
+        }
+        if (e.key.toLowerCase() === 'h' && gameState === 'PLAY') {
+            toggleHint();
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.key === 'a' || e.key === 'ArrowLeft') keys.left = false;
+        if (e.key === 'd' || e.key === 'ArrowRight') keys.right = false;
+        if (e.key === 'w' || e.key === 'ArrowUp' || e.key === ' ') keys.up = false;
+    });
+
+    ui.hintBtn.addEventListener('click', () => { if(gameState === 'PLAY') toggleHint(); });
+    document.getElementById('start-btn').addEventListener('click', startGame);
+    document.getElementById('restart-btn').addEventListener('click', startGame);
+
+    function toggleHint() {
+        if (!hintActive) {
+            hintsUsed++;
+            ui.hintDisplay.innerText = `Hints: ${hintsUsed} (Weak!)`;
+        }
+        hintActive = !hintActive;
+    }
+
+    function startGame() {
+        ui.start.classList.add('hidden');
+        ui.win.classList.add('hidden');
+        ui.hud.classList.remove('hidden');
+        deaths = 0;
+        currentLevel = 0;
+        hintsUsed = 0;
+        hintActive = false;
+        ui.deaths.innerText = `Deaths: 0`;
+        ui.hintDisplay.innerText = `Hints: 0`;
+        loadLevel(currentLevel);
+        gameState = 'PLAY';
+    }
+
+    function handleJump() {
+        if (gameState !== 'PLAY') return;
+        
+        // Allowed to jump if on ground OR within coyote time
+        if (player.onGround || coyoteTimeCounter > 0) {
+            player.vy = JUMP_FORCE;
+            coyoteTimeCounter = 0; // Consume jump
+            createJumpParticles(player.x + player.w/2, player.y + player.h);
+        } else if (player.onWallLeft) {
+            player.vy = WALL_JUMP_FORCE_Y;
+            player.vx = WALL_JUMP_FORCE_X;
+            createJumpParticles(player.x, player.y + player.h/2);
+        } else if (player.onWallRight) {
+            player.vy = WALL_JUMP_FORCE_Y;
+            player.vx = -WALL_JUMP_FORCE_X;
+            createJumpParticles(player.x + player.w, player.y + player.h/2);
+        }
+    }
+
+    function AABB(rect1, rect2) {
+        return rect1.x < rect2.x + rect2.w &&
+               rect1.x + rect1.w > rect2.x &&
+               rect1.y < rect2.y + rect2.h &&
+               rect1.y + rect1.h > rect2.y;
+    }
+
+    function checkHazardCollision(hazard, isDirectional = false) {
+        // Very fair hitbox
+        let hBox = { x: hazard.x + 10, y: hazard.y + 10, w: hazard.w - 20, h: hazard.h - 20 };
+        if (isDirectional) {
+            if (hazard.dir === 'up') { hBox.y += 10; hBox.h -= 10; }
+            if (hazard.dir === 'down') { hBox.h -= 10; }
+            if (hazard.dir === 'left') { hBox.x += 10; hBox.w -= 10; }
+            if (hazard.dir === 'right') { hBox.w -= 10; }
+        }
+        return AABB(player, hBox);
+    }
+
+    function updateGameLogic() {
+        let activeWalls = [...walls];
+
+        // X Movement
+        if (keys.left) player.vx -= PLAYER_ACCEL;
+        if (keys.right) player.vx += PLAYER_ACCEL;
+        if (!keys.left && !keys.right) player.vx *= PLAYER_FRICTION;
+        
+        if (player.vx > PLAYER_SPEED) player.vx = PLAYER_SPEED;
+        if (player.vx < -PLAYER_SPEED) player.vx = -PLAYER_SPEED;
+        if (Math.abs(player.vx) < 0.1) player.vx = 0;
+
+        player.x += player.vx;
+        player.onWallLeft = false;
+        player.onWallRight = false;
+
+        for (let w of activeWalls) {
+            if (AABB(player, w)) {
+                if (player.vx > 0) { player.x = w.x - player.w; player.vx = 0; player.onWallRight = true; } 
+                else if (player.vx < 0) { player.x = w.x + w.w; player.vx = 0; player.onWallLeft = true; }
+            }
+        }
+
+        // Y Movement
+        player.vy += GRAVITY;
+        if ((player.onWallLeft && keys.left) || (player.onWallRight && keys.right)) {
+            if (player.vy > WALL_SLIDE_SPEED) {
+                player.vy = WALL_SLIDE_SPEED;
+                if (Math.random() < 0.3) createSlideParticle(player.onWallLeft ? player.x : player.x + player.w, player.y + player.h/2);
+            }
+        } else {
+            if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
+        }
+
+        player.y += player.vy;
+        player.onGround = false;
+
+        for (let w of activeWalls) {
+            if (AABB(player, w)) {
+                if (player.vy > 0) { player.y = w.y - player.h; player.vy = 0; player.onGround = true; } 
+                else if (player.vy < 0) { player.y = w.y + w.h; player.vy = 0; }
+            }
+        }
+        
+        // Coyote Time Update
+        if (player.onGround) {
+            coyoteTimeCounter = COYOTE_TIME_MAX;
+        } else {
+            if (coyoteTimeCounter > 0) coyoteTimeCounter--;
+        }
+
+        if (player.y > canvas.height + 50) return resetPlayer();
+
+        // Hazard Collision
+        for (let s of spikes) if (checkHazardCollision(s, true)) return resetPlayer();
+        for (let l of lavas) if (checkHazardCollision(l)) return resetPlayer();
+        
+        // Fake Goals now disappear instead of killing the player
+        for (let i = fakeGoals.length - 1; i >= 0; i--) {
+            if (checkHazardCollision(fakeGoals[i])) {
+                createVanishParticles(fakeGoals[i].x + fakeGoals[i].w/2, fakeGoals[i].y + fakeGoals[i].h/2);
+                fakeGoals.splice(i, 1);
+            }
+        }
+
+        // Falling Spikes Logic (Forgiving speed)
+        for (let fs of fallingSpikes) {
+            if (!fs.falling && player.x + player.w > fs.x - 20 && player.x < fs.x + fs.w + 20 && player.y > fs.y) {
+                fs.falling = true;
+            }
+            if (fs.falling) {
+                fs.vy += (GRAVITY * 0.3); // Falls much slower
+                fs.y += fs.vy;
+                if (checkHazardCollision({x: fs.x, y: fs.y, w: fs.w, h: fs.h, dir: 'down'}, true)) return resetPlayer();
+            }
+        }
+
+        // Goal Logic
+        if (goal && AABB(player, goal)) {
+            currentLevel++;
+            if (currentLevel >= levels.length) {
+                gameState = 'WIN';
+                ui.hud.classList.add('hidden');
+                ui.finalDeaths.innerText = deaths;
+                ui.win.classList.remove('hidden');
+            } else {
+                loadLevel(currentLevel);
+            }
+        }
+
+        // Particle logic
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx; p.y += p.vy; p.life -= p.decay;
+            if (p.life <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function draw() {
+        ctx.fillStyle = '#090914';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Walls
+        ctx.fillStyle = '#111122';
+        ctx.strokeStyle = '#9900ff'; // Neon Purple walls
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#9900ff';
+        
+        ctx.beginPath();
+        for (let w of walls) ctx.rect(w.x, w.y, w.w, w.h);
+        ctx.fill(); ctx.stroke();
+
+        // Draw Fake Walls (Transparent if hint is active)
+        ctx.globalAlpha = hintActive ? 0.3 : 1.0;
+        ctx.beginPath();
+        for (let w of fakeWalls) ctx.rect(w.x, w.y, w.w, w.h); 
+        ctx.fill(); ctx.stroke();
+        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 0;
+
+        // Draw Spikes
+        ctx.fillStyle = '#f00';
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#f00';
+        
+        const drawSpikeShape = (s) => {
+            ctx.beginPath();
+            if (s.dir === 'up') { ctx.moveTo(s.x, s.y + s.h); ctx.lineTo(s.x + s.w/2, s.y); ctx.lineTo(s.x + s.w, s.y + s.h); } 
+            else if (s.dir === 'down') { ctx.moveTo(s.x, s.y); ctx.lineTo(s.x + s.w/2, s.y + s.h); ctx.lineTo(s.x + s.w, s.y); } 
+            else if (s.dir === 'left') { ctx.moveTo(s.x + s.w, s.y); ctx.lineTo(s.x, s.y + s.h/2); ctx.lineTo(s.x + s.w, s.y + s.h); } 
+            else if (s.dir === 'right') { ctx.moveTo(s.x, s.y); ctx.lineTo(s.x + s.w, s.y + s.h/2); ctx.lineTo(s.x, s.y + s.h); }
+            ctx.fill();
+        };
+
+        for (let s of spikes) drawSpikeShape(s);
+
+        // Draw Falling Spikes & Hint Danger Zones
+        ctx.fillStyle = '#ff0055'; 
+        ctx.shadowColor = '#ff0055';
+        for (let fs of fallingSpikes) {
+            ctx.beginPath();
+            ctx.moveTo(fs.x, fs.y); ctx.lineTo(fs.x + fs.w/2, fs.y + fs.h); ctx.lineTo(fs.x + fs.w, fs.y);
+            ctx.fill();
+            
+            // Hint: Show danger zone column
+            if (hintActive && !fs.falling) {
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+                ctx.fillRect(fs.x + 5, fs.y + fs.h, fs.w - 10, canvas.height - fs.y);
+                ctx.fillStyle = '#ff0055'; // Restore color for next spike
+            }
+        }
+
+        // Draw Lava
+        ctx.fillStyle = '#f90';
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#f50';
+        for (let l of lavas) {
+            ctx.fillRect(l.x, l.y + 10, l.w, l.h - 10);
+            ctx.fillStyle = '#ffcc00';
+            let waveOffset = Math.sin(Date.now() / 200 + l.x) * 4;
+            ctx.fillRect(l.x, l.y + 10 + waveOffset, l.w, 4);
+            ctx.fillStyle = '#f90'; 
+        }
+
+        // Draw Goals (Real and Fake)
+        const drawGoalShape = (g, isFake) => {
+            const isRevealedFake = isFake && hintActive;
+            const glowColor = isRevealedFake ? '#f00' : '#0f0';
+            
+            ctx.fillStyle = glowColor;
+            ctx.shadowBlur = isRevealedFake ? 15 : 25;
+            ctx.shadowColor = glowColor;
+            
+            let pulse = Math.abs(Math.sin(Date.now() / 300)) * (isRevealedFake ? 5 : 10);
+            ctx.fillRect(g.x + 5 - pulse/2, g.y + 5 - pulse/2, g.w - 10 + pulse, g.h - 10 + pulse);
+            
+            ctx.fillStyle = '#fff';
+            if (isRevealedFake) {
+                // Draw Skull / X marking for fake goal
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('X', g.x + g.w/2, g.y + g.h/2 + 8);
+            } else {
+                ctx.fillRect(g.x + 15, g.y + 15, g.w - 30, g.h - 30);
+            }
+            
+            // Hint for Real Goal
+            if (!isFake && hintActive) {
+                ctx.fillStyle = '#0f0';
+                ctx.font = 'bold 30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('↓', g.x + g.w/2, g.y - 5);
+            }
+        };
+        
+        if (goal) drawGoalShape(goal, false);
+        for (let fg of fakeGoals) drawGoalShape(fg, true);
+
+        // Draw Particles
+        ctx.shadowBlur = 10;
+        ctx.textAlign = 'left'; // reset text align
+        for (let p of particles) {
+            ctx.fillStyle = p.color;
+            ctx.shadowColor = p.color;
+            ctx.globalAlpha = Math.max(0, p.life);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+
+        // Draw Player
+        ctx.fillStyle = player.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = player.color;
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+        
+        // Draw Player Eyes
+        ctx.fillStyle = '#000';
+        ctx.shadowBlur = 0;
+        let eyeOffset = player.vx > 0.5 ? 4 : (player.vx < -0.5 ? -4 : 0);
+        ctx.fillRect(player.x + 4 + eyeOffset, player.y + 4, 4, 4);
+        ctx.fillRect(player.x + 16 + eyeOffset, player.y + 4, 4, 4);
+    }
+
+    function createDeathParticles(x, y) {
+        for (let i = 0; i < 30; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10,
+                size: Math.random() * 4 + 2, life: 1.0, decay: 0.02, color: '#0ff'
+            });
+        }
+    }
+
+    function createJumpParticles(x, y) {
+        for (let i = 0; i < 10; i++) {
+            particles.push({
+                x: x + (Math.random() - 0.5) * 10, y: y,
+                vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2,
+                size: Math.random() * 3 + 1, life: 1.0, decay: 0.05, color: '#fff'
+            });
+        }
+    }
+    
+    function createSlideParticle(x, y) {
+        particles.push({
+            x: x, y: y + (Math.random() - 0.5) * player.h,
+            vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 2,
+            size: Math.random() * 3 + 1, life: 1.0, decay: 0.1, color: '#fff'
+        });
+    }
+
+    function createVanishParticles(x, y) {
+        for (let i = 0; i < 20; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6,
+                size: Math.random() * 4 + 1, life: 1.0, decay: 0.03, color: '#ff0055'
+            });
+        }
+    }
+
+    function gameLoop() {
+        if (gameState === 'PLAY') {
+            updateGameLogic();
+            draw();
+        }
+        requestAnimationFrame(gameLoop);
+    }
+
+    // Initialize map
+    loadLevel(0);
+    draw();
+    
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
